@@ -1,18 +1,30 @@
-import 'package:bloc_respons/services/note_services.dart';
 import 'package:flutter/material.dart';
+import 'services/note_services_local.dart';
+import 'services/note_services_database.dart';
 import 'repositories/note_repository.dart';
 
 void main() {
-  runApp(MyApp());
+  // Option A — coba database dulu, jika gagal fallback ke lokal
+  final repo = NoteRepository(
+    dbService: NoteServiceDatabase(),
+    localService: NoteServiceLocal(),
+  );
+
+  // Option B — gunakan lokal saja (jika ingin memaksa local)
+  // final repo = NoteRepository(localService: NoteServiceLocal());
+
+  runApp(MyApp(noteRepository: repo));
 }
 
 class MyApp extends StatelessWidget {
-  final NoteRepository noteRepository = NoteRepository(NoteService());
+  final NoteRepository noteRepository;
+
+  const MyApp({Key? key, required this.noteRepository}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Note App',
+      title: 'BLoC_Respons',
       theme: ThemeData(primarySwatch: Colors.blue),
       home: NoteListScreen(noteRepository: noteRepository),
     );
@@ -20,7 +32,7 @@ class MyApp extends StatelessWidget {
 }
 
 class NoteListScreen extends StatefulWidget {
-  final NoteRepository noteRepository;
+  final dynamic noteRepository;
   const NoteListScreen({required this.noteRepository});
 
   @override
@@ -29,6 +41,8 @@ class NoteListScreen extends StatefulWidget {
 
 class _NoteListScreenState extends State<NoteListScreen> {
   List<Map<String, dynamic>> notes = [];
+  bool isSelectionMode = false;
+  List<Map<String, dynamic>> selectedNotes = [];
 
   @override
   void initState() {
@@ -44,24 +58,90 @@ class _NoteListScreenState extends State<NoteListScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text("My Notes")),
+      appBar: AppBar(
+        title: Text("My Notes"),
+        actions: [
+          if (isSelectionMode)
+            IconButton(
+              icon: Icon(Icons.delete),
+              onPressed: () async {
+                if (selectedNotes.isEmpty) return;
+                try {
+                  // hapus semua item yang terpilih
+                  for (var note in List.from(selectedNotes)) {
+                    final id = note['id'] ?? note['ID'];
+                    await widget.noteRepository.deleteNote(int.parse(id.toString()));
+                  }
+                  // reset selection dan reload
+                  setState(() {
+                    isSelectionMode = false;
+                    selectedNotes.clear();
+                  });
+                  await loadNotes();
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Deleted selected notes')));
+                } catch (e) {
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Delete failed: $e')));
+                }
+              },
+            )
+          else
+            IconButton(
+              icon: Icon(Icons.select_all),
+              onPressed: () {
+                setState(() {
+                  isSelectionMode = true;
+                  selectedNotes = List<Map<String, dynamic>>.from(notes);
+                });
+              },
+            ),
+        ],
+      ),
       body: ListView.builder(
         itemCount: notes.length,
         itemBuilder: (context, index) {
           final note = notes[index];
+          final selected = selectedNotes.contains(note);
           return ListTile(
-            title: Text(note['title']),
-            subtitle: Text(note['body']),
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => UpdateNoteScreen(
-                  note: note,
-                  noteRepository: widget.noteRepository,
-                  refresh: loadNotes,
-                ),
-              ),
-            ),
+            title: Text(note['title'] ?? ''),
+            subtitle: Text(note['body'] ?? ''),
+            leading: isSelectionMode
+                ? Checkbox(
+                    value: selected,
+                    onChanged: (v) {
+                      setState(() {
+                        if (v == true) {
+                          if (!selectedNotes.contains(note)) selectedNotes.add(note);
+                        } else {
+                          selectedNotes.remove(note);
+                        }
+                      });
+                    },
+                  )
+                : null,
+            onTap: () {
+              if (isSelectionMode) {
+                setState(() {
+                  if (selected) selectedNotes.remove(note); else selectedNotes.add(note);
+                });
+              } else {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => UpdateNoteScreen(
+                      note: note,
+                      noteRepository: widget.noteRepository,
+                      refresh: loadNotes,
+                    ),
+                  ),
+                );
+              }
+            },
+            onLongPress: () {
+              setState(() {
+                isSelectionMode = true;
+                if (!selectedNotes.contains(note)) selectedNotes.add(note);
+              });
+            },
           );
         },
       ),
@@ -82,7 +162,7 @@ class _NoteListScreenState extends State<NoteListScreen> {
 }
 
 class AddNoteScreen extends StatefulWidget {
-  final NoteRepository noteRepository;
+  final dynamic noteRepository;
   final VoidCallback refresh;
   const AddNoteScreen({required this.noteRepository, required this.refresh});
 
@@ -123,7 +203,7 @@ class _AddNoteScreenState extends State<AddNoteScreen> {
 }
 
 class UpdateNoteScreen extends StatefulWidget {
-  final NoteRepository noteRepository;
+  final dynamic noteRepository;
   final Map<String, dynamic> note;
   final VoidCallback refresh;
 
@@ -166,6 +246,37 @@ class _UpdateNoteScreenState extends State<UpdateNoteScreen> {
             const SizedBox(height: 20),
             ElevatedButton(onPressed: updateNote, child: Text("Update")),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class DeleteNoteScreen extends StatelessWidget {
+  final dynamic noteRepository;
+  final Map<String, dynamic> note;
+  final VoidCallback refresh;
+
+  const DeleteNoteScreen({required this.noteRepository, required this.note, required this.refresh});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text("Delete Note")),
+      body: Center(
+        child: ElevatedButton(
+          onPressed: () async {
+            final id = note['id'] ?? note['ID'];
+            try {
+              await noteRepository.deleteNote(int.parse(id.toString()));
+              refresh();
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Note deleted')));
+              Navigator.pop(context);
+            } catch (e) {
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Delete failed: $e')));
+            }
+          },
+          child: Text("Confirm Delete"),
         ),
       ),
     );
