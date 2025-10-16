@@ -1,196 +1,120 @@
+import 'package:bloc_respons/services/note_services.dart';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
+import 'repositories/note_repository.dart';
 
 void main() {
   runApp(MyApp());
 }
 
 class MyApp extends StatelessWidget {
+  final NoteRepository noteRepository = NoteRepository(NoteService());
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Note Taking App',
-      theme: ThemeData(
-        primarySwatch: Colors.blue,
-      ),
-      home: NoteList(),
+      title: 'Note App',
+      theme: ThemeData(primarySwatch: Colors.blue),
+      home: NoteListScreen(noteRepository: noteRepository),
     );
   }
 }
 
-class NoteList extends StatefulWidget {
+class NoteListScreen extends StatefulWidget {
+  final NoteRepository noteRepository;
+  const NoteListScreen({required this.noteRepository});
+
   @override
-  _NoteListState createState() => _NoteListState();
+  State<NoteListScreen> createState() => _NoteListScreenState();
 }
 
-class _NoteListState extends State<NoteList> {
-  List<dynamic> notes = [];
-  List<dynamic> selectedNotes = [];
-  bool isSelectionMode = false;
-
-  Future<void> fetchNotes() async {
-    final response = await http.get(Uri.parse('http://localhost:8080/notes'));
-    if (response.statusCode == 200) {
-      setState(() {
-        notes = jsonDecode(response.body);
-      });
-    } else {
-      throw Exception('Failed to load notes');
-    }
-  }
-
-  Future<void> deleteSelectedNotes() async {
-    for (var note in selectedNotes) {
-      final response = await http.delete(Uri.parse('http://localhost:8080/notes/${note['id']}'));
-      if (response.statusCode == 204) {
-        setState(() {
-          notes.remove(note);
-        });
-      } else {
-        throw Exception('Failed to delete note');
-      }
-    }
-    setState(() {
-      selectedNotes.clear();
-      isSelectionMode = false;
-    });
-  }
+class _NoteListScreenState extends State<NoteListScreen> {
+  List<Map<String, dynamic>> notes = [];
 
   @override
   void initState() {
     super.initState();
-    fetchNotes();
+    loadNotes();
+  }
+
+  Future<void> loadNotes() async {
+    final data = await widget.noteRepository.fetchNotes();
+    setState(() => notes = data);
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text('Note List'),
-        actions: [
-          if (!isSelectionMode)
-            IconButton(
-              icon: Icon(Icons.select_all),
-              onPressed: () {
-                setState(() {
-                  isSelectionMode = true;
-                  selectedNotes = List.from(notes);
-                });
-              },
-            ),
-          if (isSelectionMode)
-            IconButton(
-              icon: Icon(Icons.delete),
-              onPressed: deleteSelectedNotes,
-            ),
-        ],
-      ),
+      appBar: AppBar(title: Text("My Notes")),
       body: ListView.builder(
         itemCount: notes.length,
         itemBuilder: (context, index) {
+          final note = notes[index];
           return ListTile(
-            title: Text(notes[index]['title']),
-            subtitle: Text(notes[index]['body']),
-            onTap: () {
-              if (isSelectionMode) {
-                setState(() {
-                  if (selectedNotes.contains(notes[index])) {
-                    selectedNotes.remove(notes[index]);
-                  } else {
-                    selectedNotes.add(notes[index]);
-                  }
-                });
-              } else {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => NoteDetail(
-                      id: notes[index]['ID'],
-                      note: notes[index],
-                      refreshNotes: fetchNotes, // Pass the callback function
-                    ),
-                  ),
-                );
-              }
-            },
-            leading: isSelectionMode
-                ? Checkbox(
-                    value: selectedNotes.contains(notes[index]),
-                    onChanged: (value) {
-                      setState(() {
-                        if (value!) {
-                          selectedNotes.add(notes[index]);
-                        } else {
-                          selectedNotes.remove(notes[index]);
-                        }
-                      });
-                    },
-                  )
-                : null,
-          );
-        },
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => AddNote(
-                refreshNotes: fetchNotes, // Pass the callback function
+            title: Text(note['title']),
+            subtitle: Text(note['body']),
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => UpdateNoteScreen(
+                  note: note,
+                  noteRepository: widget.noteRepository,
+                  refresh: loadNotes,
+                ),
               ),
             ),
           );
         },
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () => Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => AddNoteScreen(
+              noteRepository: widget.noteRepository,
+              refresh: loadNotes,
+            ),
+          ),
+        ),
         child: Icon(Icons.add),
       ),
     );
   }
 }
 
-class NoteDetail extends StatelessWidget {
-  final dynamic note;
-  final int id;
-  final Function refreshNotes;
-  NoteDetail({required this.note, required this.id, required this.refreshNotes});
+class AddNoteScreen extends StatefulWidget {
+  final NoteRepository noteRepository;
+  final VoidCallback refresh;
+  const AddNoteScreen({required this.noteRepository, required this.refresh});
+
+  @override
+  State<AddNoteScreen> createState() => _AddNoteScreenState();
+}
+
+class _AddNoteScreenState extends State<AddNoteScreen> {
+  final titleController = TextEditingController();
+  final bodyController = TextEditingController();
+
+  Future<void> saveNote() async {
+    await widget.noteRepository.addNote({
+      'title': titleController.text,
+      'body': bodyController.text,
+    });
+    widget.refresh();
+    Navigator.pop(context);
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text('Note Detail'),
-        actions: [
-          IconButton(
-            icon: Icon(Icons.edit),
-            onPressed: () {
-              Navigator.pushReplacement(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => UpdateNoteScreen(
-                    note: note,
-                    id: note['ID'],
-                    refreshNotes: refreshNotes, // Pass the callback function
-                  ),
-                ),
-              );
-            },
-          ),
-        ],
-      ),
+      appBar: AppBar(title: Text("Add Note")),
       body: Padding(
-        padding: EdgeInsets.all(16.0),
+        padding: const EdgeInsets.all(16),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              note['title'],
-              style: TextStyle(
-                fontSize: 24.0,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            SizedBox(height: 10.0),
-            Text(note['body']),
+            TextField(controller: titleController, decoration: InputDecoration(labelText: "Title")),
+            TextField(controller: bodyController, decoration: InputDecoration(labelText: "Content")),
+            const SizedBox(height: 20),
+            ElevatedButton(onPressed: saveNote, child: Text("Save")),
           ],
         ),
       ),
@@ -199,145 +123,51 @@ class NoteDetail extends StatelessWidget {
 }
 
 class UpdateNoteScreen extends StatefulWidget {
-  final dynamic note;
-  final int id;
-  final Function refreshNotes;
-  UpdateNoteScreen({required this.note, required this.id, required this.refreshNotes});
+  final NoteRepository noteRepository;
+  final Map<String, dynamic> note;
+  final VoidCallback refresh;
+
+  const UpdateNoteScreen({required this.noteRepository, required this.note, required this.refresh});
 
   @override
-  _UpdateNoteScreenState createState() => _UpdateNoteScreenState();
+  State<UpdateNoteScreen> createState() => _UpdateNoteScreenState();
 }
 
 class _UpdateNoteScreenState extends State<UpdateNoteScreen> {
-  late TextEditingController _titleController;
-  late TextEditingController _contentController;
+  late TextEditingController titleController;
+  late TextEditingController bodyController;
 
   @override
   void initState() {
     super.initState();
-    _titleController = TextEditingController(text: widget.note['title']);
-    _contentController = TextEditingController(text: widget.note['body']);
+    titleController = TextEditingController(text: widget.note['title']);
+    bodyController = TextEditingController(text: widget.note['body']);
+  }
+
+  Future<void> updateNote() async {
+    await widget.noteRepository.updateNote(widget.note['id'], {
+      'title': titleController.text,
+      'body': bodyController.text,
+    });
+    widget.refresh();
+    Navigator.pop(context);
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text('Edit Note'),
-      ),
+      appBar: AppBar(title: Text("Update Note")),
       body: Padding(
-        padding: EdgeInsets.all(16.0),
+        padding: const EdgeInsets.all(16),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            TextField(
-              controller: _titleController,
-              decoration: InputDecoration(labelText: 'Title'),
-            ),
-            SizedBox(height: 10.0),
-            TextField(
-              controller: _contentController,
-              decoration: InputDecoration(labelText: 'Content'),
-              maxLines: null,
-            ),
-            SizedBox(height: 20.0),
-            ElevatedButton(
-              onPressed: () async {
-                final response = await http.patch(
-                  Uri.parse('http://localhost:8080/notes/${widget.id}'),
-                  body: jsonEncode({
-                    'title': _titleController.text,
-                    'body': _contentController.text,
-                  }),
-                  headers: {'Content-Type': 'application/json'},
-                );
-
-                if (response.statusCode == 200) {
-                  widget.refreshNotes(); // Refresh notes after update
-                  Navigator.pop(context);
-                } else {
-                  throw Exception('Failed to update note');
-                }
-              },
-              child: Text('Save'),
-            ),
+            TextField(controller: titleController, decoration: InputDecoration(labelText: "Title")),
+            TextField(controller: bodyController, decoration: InputDecoration(labelText: "Content")),
+            const SizedBox(height: 20),
+            ElevatedButton(onPressed: updateNote, child: Text("Update")),
           ],
         ),
       ),
     );
-  }
-}
-
-class AddNote extends StatefulWidget {
-  final Function refreshNotes;
-  AddNote({required this.refreshNotes});
-
-  @override
-  _AddNoteState createState() => _AddNoteState();
-}
-
-class _AddNoteState extends State<AddNote> {
-  late TextEditingController _titleController;
-  late TextEditingController _contentController;
-
-  @override
-  void initState() {
-    super.initState();
-    _titleController = TextEditingController();
-    _contentController = TextEditingController();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text('Add Note'),
-      ),
-      body: Padding(
-        padding: EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            TextField(
-              controller: _titleController,
-              decoration: InputDecoration(labelText: 'Title'),
-            ),
-            SizedBox(height: 10.0),
-            TextField(
-              controller: _contentController,
-              decoration: InputDecoration(labelText: 'Content'),
-              maxLines: null,
-            ),
-            SizedBox(height: 20.0),
-            ElevatedButton(
-              onPressed: () async {
-                final response = await http.post(
-                  Uri.parse('http://localhost:8080/notes'),
-                  body: jsonEncode({
-                    'title': _titleController.text,
-                    'body': _contentController.text,
-                  }),
-                  headers: {'Content-Type': 'application/json'},
-                );
-                if (response.statusCode == 201) {
-                  widget.refreshNotes(); // Refresh notes after adding
-                  Navigator.pop(context);
-                } else {
-                  throw Exception('Failed to add note');
-                }
-              },
-              child: Text('Add Note'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  @override
-  void dispose() {
-    _titleController.dispose();
-    _contentController.dispose();
-    super.dispose();
   }
 }
